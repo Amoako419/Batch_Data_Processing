@@ -1,0 +1,6 @@
+postgres:
+    port: "8089"
+project:
+    name: etl-with-airflow
+webserver:
+    port: "8088"
