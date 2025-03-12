@@ -143,12 +143,13 @@ def rds_s3_to_redshift_pipeline():
             print("No valid data extracted from S3.")
             return []
 
+
     @task
     def transform_and_compute_kpis(rds_data: List[dict], s3_data: List[dict]) -> List[dict]:
         """
-        Merge S3 & RDS data, align columns, compute KPIs, and prepare for Redshift loading.
-        Now the aggregation is based on `created_at` (daily).
-        
+        Merge S3 & RDS data, align columns, remove alias suffixes, compute KPIs, 
+        and prepare for Redshift loading (aggregated by `created_at`).
+
         Args:
             rds_data (List[dict]): Extracted data from RDS
             s3_data (List[dict]): Extracted data from S3
@@ -160,28 +161,34 @@ def rds_s3_to_redshift_pipeline():
         df_rds = pd.DataFrame(rds_data)
         df_s3 = pd.DataFrame(s3_data)
 
-        print(f"Initial RDS Columns: {df_rds.columns.tolist()}")
+        print(f" Initial RDS Columns: {df_rds.columns.tolist()}")
         print(f"Initial S3 Columns: {df_s3.columns.tolist()}")
 
-        # Ensure 'created_at' exists and convert to datetime
-        for df in [df_rds, df_s3]:
-            if "created_at" in df.columns:
-                df["created_at"] = pd.to_datetime(df["created_at"]).dt.date  # Group by date (not full timestamp)
+        #  Ensure 'created_at' exists in both datasets
+        if "listen_time" in df_s3.columns:
+            df_s3.rename(columns={"listen_time": "created_at"}, inplace=True)  # Rename S3 timestamp column
 
-        # Rename `id` to `track_id` only if `track_id` is missing
+        if "created_at" not in df_rds.columns or "created_at" not in df_s3.columns:
+            raise ValueError("Missing 'created_at' column in RDS or S3 data!")
+
+        # Convert 'created_at' to Date Format (Daily Aggregation)
+        df_rds["created_at"] = pd.to_datetime(df_rds["created_at"]).dt.date
+        df_s3["created_at"] = pd.to_datetime(df_s3["created_at"]).dt.date
+
+        #  Rename `id` to `track_id` only if `track_id` is missing
         if "track_id" not in df_rds.columns and "id" in df_rds.columns:
             df_rds.rename(columns={"id": "track_id"}, inplace=True)
 
-        # Remove duplicate columns from RDS
+        #  Remove duplicate columns from RDS
         df_rds = df_rds.loc[:, ~df_rds.columns.duplicated()]
-        print(f"Columns after removing duplicates: {df_rds.columns.tolist()}")
+        print(f" Columns after removing duplicates: {df_rds.columns.tolist()}")
 
-        # Add missing columns to RDS before selecting
+        #  Add missing columns to RDS before selecting
         for col in ["play_count", "like_count", "share_count"]:
             if col not in df_rds.columns:
                 df_rds[col] = 0  # Default to 0
 
-        # Add missing columns to S3 before merging
+        #  Add missing columns to S3 before merging
         for col in ["play_count", "like_count", "share_count", "popularity", "duration_ms"]:
             if col not in df_s3.columns:
                 df_s3[col] = 0  # Default numerical columns to 0
@@ -195,12 +202,29 @@ def rds_s3_to_redshift_pipeline():
         df_s3 = df_s3[selected_columns]
         df_rds = df_rds[selected_columns]
 
-        # Merge datasets (left join to retain RDS metadata, but keep S3 records too)
+        # Check for 'created_at' before merging
+        if "created_at" not in df_rds.columns or "created_at" not in df_s3.columns:
+            raise ValueError("'created_at' column is missing after renaming!")
+
+        # 🔹 Merge datasets (left join to retain RDS metadata, but keep S3 records too)
         combined_df = df_rds.merge(df_s3, on=["user_id", "track_id", "created_at"], how="outer")
 
-        print(f"Final Merged Columns Before Aggregation: {combined_df.columns.tolist()}")
+        print(f" Final Merged Columns Before Fixing Suffixes: {combined_df.columns.tolist()}")
 
-        # Compute Daily-Level KPIs (Aggregation by `created_at`)
+        # Remove `_x` and `_y` Aliases After Merging
+        for col in ["popularity", "duration_ms", "play_count", "like_count", "share_count"]:
+            col_x, col_y = f"{col}_x", f"{col}_y"
+            if col_x in combined_df.columns and col_y in combined_df.columns:
+                combined_df[col] = combined_df[col_x].fillna(combined_df[col_y])  # Use _x first, fallback to _y
+                combined_df.drop([col_x, col_y], axis=1, inplace=True)
+            elif col_x in combined_df.columns:
+                combined_df.rename(columns={col_x: col}, inplace=True)
+            elif col_y in combined_df.columns:
+                combined_df.rename(columns={col_y: col}, inplace=True)
+
+        print(f" Final Merged Columns After Fixing Suffixes: {combined_df.columns.tolist()}")
+
+        #  Compute Daily-Level KPIs (Aggregation by `created_at`)
         daily_kpis = combined_df.groupby("created_at").agg(
             listen_count=("track_id", "count"),
             avg_track_duration_sec=("duration_ms", lambda x: x.mean() / 1000),
@@ -218,29 +242,34 @@ def rds_s3_to_redshift_pipeline():
         print(f"Computed {len(transformed_data)} KPI records.")
         return transformed_data
 
+
+
     @task
-    def create_kpi_table_in_redshift(redshift_conn_id: str, table: str):
+    def create_daily_kpi_table_in_redshift(redshift_conn_id: str, table: str):
         """
-        Create the KPI table in Amazon Redshift if it doesn't exist.
+        Create the daily KPI table in Amazon Redshift if it doesn't exist.
+
+        Args:
+            redshift_conn_id (str): The Airflow connection ID for Redshift.
+            table (str): The name of the table to create.
         """
         create_table_query = f"""
         CREATE TABLE IF NOT EXISTS {table} (
-            track_genre VARCHAR(255),
-            listen_count INT,
-            avg_track_duration_sec FLOAT,
-            popularity_index FLOAT,
-            most_popular_track VARCHAR(255),
-            stream_hour INT,
-            unique_listeners INT,
-            top_artists VARCHAR(255),
-            track_diversity_index FLOAT,
-            kpi_type VARCHAR(50)
+            created_at DATE PRIMARY KEY,          
+            listen_count INT,                      
+            avg_track_duration_sec FLOAT,          
+            popularity_index FLOAT,                
+            unique_listeners INT,                  
+            track_diversity_index FLOAT,           
+            kpi_type VARCHAR(50)                   
         );
         """
         
         redshift_hook = RedshiftSQLHook(redshift_conn_id=redshift_conn_id)
         redshift_hook.run(create_table_query)
-        print(f"Table `{table}` is ready in Redshift.")
+        print(f"✅ Table `{table}` is ready in Redshift.")
+
+
 
     @task
     def load_kpis_to_redshift(redshift_conn_id: str, table: str, data: List[dict]):
@@ -248,40 +277,35 @@ def rds_s3_to_redshift_pipeline():
         Load computed KPI data into Amazon Redshift.
         """
         if not data:
-            print("No data to load into Redshift.")
+            print(" No data to load into Redshift.")
             return
 
         redshift_hook = RedshiftSQLHook(redshift_conn_id=redshift_conn_id)
         connection = redshift_hook.get_conn()
         cursor = connection.cursor()
 
-        # Ensure all required columns exist before insertion
+        #  Ensure only columns that exist in Redshift are included
         required_columns = [
-            "track_genre", "listen_count", "avg_track_duration_sec", "popularity_index", 
-            "most_popular_track", "stream_hour", "unique_listeners", "top_artists", 
-            "track_diversity_index", "kpi_type"
+            "created_at", "listen_count", "avg_track_duration_sec", "popularity_index",
+            "unique_listeners", "track_diversity_index", "kpi_type"
         ]
 
-        # Fill missing columns with default values
-        for row in data:
-            for col in required_columns:
-                if col not in row:
-                    row[col] = None if col in ["track_genre", "most_popular_track", "top_artists", "kpi_type"] else 0.0
+        # Remove extra columns (e.g., `track_genre`)
+        cleaned_data = [{k: row[k] for k in required_columns if k in row} for row in data]
 
-        # Extract column names from the first row of data
-        columns = required_columns  # Use the predefined column order
+        # Extract column names from the first row of cleaned data
+        columns = required_columns
         columns_str = ', '.join(columns)
         placeholders = ', '.join(['%s'] * len(columns))
 
-        # Print expected vs. actual column count
         print(f"Expected column count: {len(columns)}")
-        print(f"Data sample after fixing missing columns: {data[0]}")
+        print(f"Data sample before inserting into Redshift: {cleaned_data[0]}")  # Debugging
 
         # Prepare SQL statement
         insert_query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
 
         # Convert list of dictionaries to list of tuples for executemany()
-        records = [tuple(row[col] for col in columns) for row in data]
+        records = [tuple(row[col] for col in columns) for row in cleaned_data]
 
         try:
             cursor.executemany(insert_query, records)
@@ -289,10 +313,11 @@ def rds_s3_to_redshift_pipeline():
             print(f"Successfully loaded {len(data)} KPI records into `{table}`.")
         except Exception as e:
             connection.rollback()
-            print(f"Error inserting data into Redshift: {e}")
+            print(f" Error inserting data into Redshift: {e}")
         finally:
             cursor.close()
             connection.close()
+
 
 # Define pipeline
     mysql_conn_id = "rds_conn"
@@ -325,7 +350,7 @@ def rds_s3_to_redshift_pipeline():
     transformed_data = transform_and_compute_kpis(extracted_data_rds, extracted_data_s3)
 
     # Create KPI Table Before Loading Data
-    create_kpi_table = create_kpi_table_in_redshift(redshift_conn_id, redshift_table_kpi)
+    create_kpi_table = create_daily_kpi_table_in_redshift(redshift_conn_id, redshift_table_kpi)
 
     # Load Data into Redshift
     load_data = load_kpis_to_redshift(redshift_conn_id, redshift_table_kpi, transformed_data)
