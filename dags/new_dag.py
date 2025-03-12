@@ -92,8 +92,9 @@ def rds_s3_to_redshift_pipeline():
             print(f"Extracted {len(combined_df)} records from S3.")
             return combined_df.to_dict(orient="records")
         else:
-            print("⚠️ No valid data extracted from S3.")
+            print("No valid data extracted from S3.")
             return []
+
 
 
 
@@ -113,29 +114,25 @@ def rds_s3_to_redshift_pipeline():
         df_rds = pd.DataFrame(rds_data)
         df_s3 = pd.DataFrame(s3_data)
 
-        print(f"🟢 Initial RDS Columns: {df_rds.columns.tolist()}")
-        print(f"🟢 Initial S3 Columns: {df_s3.columns.tolist()}")
-
-        # 🔹 Fix: Remove duplicate 'track_id' column before renaming
-        if "id" in df_rds.columns and "track_id" in df_rds.columns:
-            df_rds.drop(columns=["id"], inplace=True)
-        
-        # 🔹 Rename 'id' to 'track_id' if needed
-        elif "id" in df_rds.columns:
-            df_rds.rename(columns={"id": "track_id"}, inplace=True)
-
-        print(f"RDS Columns After Fixing 'track_id' Issue: {df_rds.columns.tolist()}")
+        print(f"Initial RDS Columns: {df_rds.columns.tolist()}")
+        print(f"Initial S3 Columns: {df_s3.columns.tolist()}")
 
         # 🔹 Ensure 'created_at' exists in S3 Data
         if "listen_time" in df_s3.columns:
             df_s3.rename(columns={"listen_time": "created_at"}, inplace=True)
 
+        # 🔹 Rename `id` to `track_id` only if `track_id` is missing
+        if "track_id" not in df_rds.columns and "id" in df_rds.columns:
+            df_rds.rename(columns={"id": "track_id"}, inplace=True)
+
+        # 🔹 Remove duplicate columns from RDS
+        df_rds = df_rds.loc[:, ~df_rds.columns.duplicated()]
+        print(f"Columns after removing duplicates: {df_rds.columns.tolist()}")
+
         # 🔹 Add missing columns to RDS before selecting
         for col in ["play_count", "like_count", "share_count"]:
             if col not in df_rds.columns:
                 df_rds[col] = 0  # Default to 0
-
-        print(f"Updated RDS Columns (After Adding Missing Fields): {df_rds.columns.tolist()}")
 
         # 🔹 Add missing columns to S3 before merging
         for col in ["play_count", "like_count", "share_count", "track_genre", "track_name", "artists", "popularity", "duration_ms"]:
@@ -145,8 +142,9 @@ def rds_s3_to_redshift_pipeline():
         print(f"Updated S3 Columns (After Adding Missing Fields): {df_s3.columns.tolist()}")
 
         # 🔹 Select only relevant columns for merging
-        s3_columns_needed = list({"user_id", "track_id", "created_at"} | {"track_genre", "duration_ms", "popularity", "track_name", "artists", "play_count", "like_count", "share_count"})
-        rds_columns_needed = list({"user_id", "track_id", "created_at"} | {"track_genre", "duration_ms", "popularity", "track_name", "artists", "play_count", "like_count", "share_count"})
+        common_columns = {"user_id", "track_id", "created_at"}
+        s3_columns_needed = list(common_columns | {"track_genre", "duration_ms", "popularity", "track_name", "artists", "play_count", "like_count", "share_count"})
+        rds_columns_needed = list(common_columns | {"track_genre", "duration_ms", "popularity", "track_name", "artists", "play_count", "like_count", "share_count"})
 
         df_s3 = df_s3[s3_columns_needed]
         df_rds = df_rds[rds_columns_needed]
@@ -154,24 +152,23 @@ def rds_s3_to_redshift_pipeline():
         # 🔹 Merge datasets (left join to retain RDS metadata, but keep S3 records too)
         combined_df = df_rds.merge(df_s3, on=["user_id", "track_id", "created_at"], how="outer")
 
-        print(f"🟢 Final Merged Columns: {combined_df.columns.tolist()}")
+        print(f"Final Merged Columns Before Fixing Suffixes: {combined_df.columns.tolist()}")
 
-        # 🔹 Ensure missing columns exist after merging
-        for col in ["play_count", "like_count", "share_count", "duration_ms"]:
-            if col not in combined_df.columns:
-                combined_df[col] = 0  # Default missing numeric columns to 0
+        # 🔹 Fix Column Suffix Issues: Merge `_x` and `_y` Columns
+        for col in ["track_genre", "track_name", "artists", "play_count", "like_count", "share_count", "popularity", "duration_ms"]:
+            col_x = f"{col}_x"
+            col_y = f"{col}_y"
 
-        # 🔹 Fill missing values in track metadata
-        combined_df.fillna({
-            "track_genre": "Unknown",
-            "track_name": "Unknown",
-            "artists": "Unknown",
-            "play_count": 0,
-            "like_count": 0,
-            "share_count": 0,
-            "popularity": 0,
-            "duration_ms": 0
-        }, inplace=True)
+            if col_x in combined_df.columns and col_y in combined_df.columns:
+                # Merge the two columns, prioritizing `_x` but using `_y` if `_x` is NaN
+                combined_df[col] = combined_df[col_x].fillna(combined_df[col_y])
+                combined_df.drop([col_x, col_y], axis=1, inplace=True)
+            elif col_x in combined_df.columns:
+                combined_df.rename(columns={col_x: col}, inplace=True)
+            elif col_y in combined_df.columns:
+                combined_df.rename(columns={col_y: col}, inplace=True)
+
+        print(f"Final Merged Columns After Fixing Suffixes: {combined_df.columns.tolist()}")
 
         # 🔹 Compute Genre-Level KPIs
         genre_kpis = combined_df.groupby("track_genre").agg(
@@ -193,13 +190,15 @@ def rds_s3_to_redshift_pipeline():
         # 🔹 Merge KPI data for Redshift
         transformed_data = genre_kpis.to_dict(orient="records") + hourly_kpis.to_dict(orient="records")
 
-        print(f"✅ Computed {len(transformed_data)} KPI records.")
+        print(f"Computed {len(transformed_data)} KPI records.")
         return transformed_data
-
 
 
     @task
     def create_kpi_table_in_redshift(redshift_conn_id: str, table: str):
+        """
+        Create the KPI table in Amazon Redshift if it doesn't exist.
+        """
         create_table_query = f"""
         CREATE TABLE IF NOT EXISTS {table} (
             track_genre VARCHAR(255),
@@ -217,35 +216,61 @@ def rds_s3_to_redshift_pipeline():
         
         redshift_hook = RedshiftSQLHook(redshift_conn_id=redshift_conn_id)
         redshift_hook.run(create_table_query)
-        print(f"✅ Table {table} is ready in Redshift.")
+        print(f"Table `{table}` is ready in Redshift.")
 
     @task
     def load_kpis_to_redshift(redshift_conn_id: str, table: str, data: List[dict]):
+        """
+        Load computed KPI data into Amazon Redshift.
+        """
         if not data:
-            print("❌ No data to load into Redshift.")
+            print("No data to load into Redshift.")
             return
 
         redshift_hook = RedshiftSQLHook(redshift_conn_id=redshift_conn_id)
         connection = redshift_hook.get_conn()
         cursor = connection.cursor()
 
-        columns = data[0].keys()
+        # 🔹 Ensure all required columns exist before insertion
+        required_columns = [
+            "track_genre", "listen_count", "avg_track_duration_sec", "popularity_index", 
+            "most_popular_track", "stream_hour", "unique_listeners", "top_artists", 
+            "track_diversity_index", "kpi_type"
+        ]
+
+        # Fill missing columns with default values
+        for row in data:
+            for col in required_columns:
+                if col not in row:
+                    row[col] = None if col in ["track_genre", "most_popular_track", "top_artists", "kpi_type"] else 0.0
+
+        # Extract column names from the first row of data
+        columns = required_columns  # Use the predefined column order
         columns_str = ', '.join(columns)
         placeholders = ', '.join(['%s'] * len(columns))
 
+        # Print expected vs. actual column count
+        print(f"Expected column count: {len(columns)}")
+        print(f"Data sample after fixing missing columns: {data[0]}")
+
+        # Prepare SQL statement
         insert_query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
-        records = [tuple(row.values()) for row in data]
+
+        # Convert list of dictionaries to list of tuples for executemany()
+        records = [tuple(row[col] for col in columns) for row in data]
 
         try:
             cursor.executemany(insert_query, records)
             connection.commit()
-            print(f"✅ Successfully loaded {len(data)} KPI records into {table}.")
+            print(f"Successfully loaded {len(data)} KPI records into `{table}`.")
         except Exception as e:
             connection.rollback()
-            print(f"❌ Error inserting data into Redshift: {e}")
+            print(f"Error inserting data into Redshift: {e}")
         finally:
             cursor.close()
             connection.close()
+
+
 
     # Define pipeline
     mysql_conn_id = "rds_conn"
