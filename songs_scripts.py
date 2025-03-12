@@ -91,10 +91,10 @@ def insert_songs_batch(connection, data):
                 batch = records[i : i + batch_size]
                 cursor.executemany(insert_query, batch)
                 connection.commit()
-                print(f"✅ Inserted {i + len(batch)} records so far...")
-        print("🎉 All records inserted successfully!")
+                print(f"Inserted {i + len(batch)} records so far...")
+        print("All records inserted successfully!")
     except mysql.connector.Error as e:
-        print("❌ Failed to insert batch:", e)
+        print("Failed to insert batch:", e)
         connection.rollback()
 
 # Main function
