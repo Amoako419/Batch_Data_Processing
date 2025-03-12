@@ -68,6 +68,8 @@ def rds_s3_to_redshift_pipeline():
         s3_hook = S3Hook(aws_conn_id=s3_conn_id)
         valid_keys = []
 
+        expected_columns = {"user_id", "track_id", "listen_time"}
+
         for key in keys:
             try:
                 # Read file directly from S3 into memory
@@ -77,15 +79,19 @@ def rds_s3_to_redshift_pipeline():
                 # Load CSV into DataFrame
                 df = pd.read_csv(io.StringIO(csv_data))
 
-                # Ensure necessary columns exist
-                expected_columns = {"user_id", "track_id", "listen_time"}
+                # Check for missing columns
                 missing_columns = expected_columns - set(df.columns)
                 if missing_columns:
                     raise ValueError(f"Missing columns in {key}: {missing_columns}")
 
                 valid_keys.append(key)
+
             except Exception as e:
-                print(f" Error processing {key}: {e}")
+                print(f"Error processing {key}: {e}")
+
+        if not valid_keys:
+            print("No valid S3 files found. DAG execution will stop.")
+            raise ValueError("No valid S3 files found. DAG stopping.")  # This triggers `EmptyOperator`
 
         print(f"Found {len(valid_keys)} valid CSV files in {bucket_name}.")
         return valid_keys
@@ -314,7 +320,30 @@ def rds_s3_to_redshift_pipeline():
 
 
 
+    # # Define pipeline
+    # mysql_conn_id = "rds_conn"
+    # redshift_conn_id = "aws_redshift_conn"
+    # s3_conn_id = "aws_conn_default"
+    # rds_query = "SELECT u.*, s.* FROM users u JOIN songs s ON u.user_id = s.id"
+    # redshift_table_kpi = "kpi_results"
+    # s3_bucket = "streaming-data-source-11"
+    # s3_key = "Batch_data/streams/"
+
+    # extracted_data_rds = extract_data_from_rds(mysql_conn_id, rds_query)
+    # validate_s3_columns = validate_s3_data_columns(s3_conn_id, s3_bucket, s3_key)
+    # validated_s3_files = validate_s3_data(s3_conn_id, s3_bucket, s3_key)
+    # extracted_data_s3 = extract_s3_data(s3_conn_id, s3_bucket, validated_s3_files)
+
+    # transformed_data = transform_and_compute_kpis(extracted_data_rds, extracted_data_s3)
+    # create_kpi_table = create_kpi_table_in_redshift(redshift_conn_id, redshift_table_kpi)
+    
+    # create_kpi_table >> transformed_data >> load_kpis_to_redshift(redshift_conn_id, redshift_table_kpi, transformed_data)
     # Define pipeline
+
+
+    
+
+# Define pipeline
     mysql_conn_id = "rds_conn"
     redshift_conn_id = "aws_redshift_conn"
     s3_conn_id = "aws_conn_default"
@@ -323,15 +352,40 @@ def rds_s3_to_redshift_pipeline():
     s3_bucket = "streaming-data-source-11"
     s3_key = "Batch_data/streams/"
 
+    # Extract RDS Data
     extracted_data_rds = extract_data_from_rds(mysql_conn_id, rds_query)
-    validate_s3_columns = validate_s3_data_columns(s3_conn_id, s3_bucket, s3_key)
+
+    # Validate S3 File Structure (Ensure files exist)
     validated_s3_files = validate_s3_data(s3_conn_id, s3_bucket, s3_key)
+
+    # Stop DAG Execution if No S3 Files Are Found
+    stop_dag_no_files = EmptyOperator(task_id="stop_dag_if_no_s3_files")
+
+    # Validate S3 Column Structure (Ensures correct schema)
+    validated_s3_columns = validate_s3_data_columns(s3_conn_id, s3_bucket, validated_s3_files)
+
+    # Stop DAG Execution if S3 Columns Are Invalid
+    stop_dag_invalid_columns = EmptyOperator(task_id="stop_dag_if_s3_columns_invalid")
+
+    # Extract Data from S3
     extracted_data_s3 = extract_s3_data(s3_conn_id, s3_bucket, validated_s3_files)
 
+    # Transform & Compute KPIs
     transformed_data = transform_and_compute_kpis(extracted_data_rds, extracted_data_s3)
+
+    # Create KPI Table Before Loading Data
     create_kpi_table = create_kpi_table_in_redshift(redshift_conn_id, redshift_table_kpi)
-    
-    create_kpi_table >> transformed_data >> load_kpis_to_redshift(redshift_conn_id, redshift_table_kpi, transformed_data)
+
+    # Load Data into Redshift
+    load_data = load_kpis_to_redshift(redshift_conn_id, redshift_table_kpi, transformed_data)
+
+    # DAG Dependencies
+    validated_s3_files >> [stop_dag_no_files, validated_s3_columns]  # Stop if no files
+    validated_s3_columns >> [stop_dag_invalid_columns, extracted_data_s3]  # Stop if columns are invalid
+    create_kpi_table >> extracted_data_s3 >> transformed_data >> load_data
+
+
+
 
 
 rds_s3_to_redshift_pipeline()
