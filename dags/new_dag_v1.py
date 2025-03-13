@@ -151,106 +151,63 @@ def rds_s3_to_redshift_pipeline():
 
 
     @task
-    def transform_and_compute_kpis(rds_data: List[dict], s3_data: List[dict]) -> List[dict]:
-            """
-            Merge S3 & RDS data, align columns, compute Daily and Hourly KPIs, 
-            and prepare for Redshift loading.
+    def transform_and_compute_kpis(user_songs: List[dict], streams: List[dict]) -> List[dict]:
+        """
+        Compute Daily KPIs from merged PostgreSQL (RDS) and S3 data.
 
-            Args:
-                rds_data (List[dict]): Extracted data from RDS
-                s3_data (List[dict]): Extracted data from S3
+        Args:
+            user_songs (List[dict]): Extracted data from RDS.
+            streams (List[dict]): Extracted data from S3.
 
-            Returns:
-                List[dict]: Computed KPIs grouped by `created_at` and `stream_hour`
-            """
-            # Convert both datasets into DataFrames
-            df_rds = pd.DataFrame(rds_data)
-            df_s3 = pd.DataFrame(s3_data)
+        Returns:
+            List[dict]: Computed KPIs per day.
+        """
+        import pandas as pd
 
-            print(f" Initial RDS Columns: {df_rds.columns.tolist()}")
-            print(f" Initial S3 Columns: {df_s3.columns.tolist()}")
+        # Convert lists to DataFrames
+        df_rds = pd.DataFrame(user_songs)
+        df_s3 = pd.DataFrame(streams)
 
-            #  Rename 'listen_time' in S3 to 'created_at' for consistency
-            if "listen_time" in df_s3.columns:
-                df_s3.rename(columns={"listen_time": "created_at"}, inplace=True)
+        # Ensure timestamps are converted to date format
+        df_rds["created_at"] = pd.to_datetime(df_rds["created_at"]).dt.date
+        df_s3["listen_time"] = pd.to_datetime(df_s3["listen_time"]).dt.date
 
-            #  Ensure 'created_at' exists in both datasets
-            if "created_at" not in df_rds.columns or "created_at" not in df_s3.columns:
-                raise ValueError(" Missing 'created_at' column in RDS or S3 data!")
+        # Rename 'listen_time' to 'created_at' in S3 to align with RDS
+        df_s3.rename(columns={"listen_time": "created_at"}, inplace=True)
 
-            #  Convert 'created_at' to Date Format (Daily Aggregation)
-            df_rds["created_at"] = pd.to_datetime(df_rds["created_at"]).dt.date
-            df_s3["created_at"] = pd.to_datetime(df_s3["created_at"]).dt.date
+        # Merge datasets (outer join to retain all data)
+        merged_df = pd.merge(df_rds, df_s3, on=["user_id", "track_id", "created_at"], how="outer")
 
-            #  Extract `stream_hour` from `created_at`
-            df_rds["stream_hour"] = pd.to_datetime(df_rds["created_at"]).dt.hour
-            df_s3["stream_hour"] = pd.to_datetime(df_s3["created_at"]).dt.hour
+        # Compute KPIs
+        kpis = merged_df.groupby("created_at").agg(
+            unique_tracks_count=("track_id", "nunique"),  # Unique tracks played
+            avg_track_duration=("duration_ms", lambda x: x.mean() / 60000),  # Convert ms to minutes
+            popularity_index=("popularity", "mean"),  # Average popularity score
+            unique_listeners=("user_id", "nunique"),  # Unique users per day
+            track_diversity_index=("track_id", lambda x: x.nunique() / x.count()),  # Diversity index
+        ).reset_index()
 
-            #  Rename `id` to `track_id` in RDS if needed
-            if "track_id" not in df_rds.columns and "id" in df_rds.columns:
-                df_rds.rename(columns={"id": "track_id"}, inplace=True)
+        # Find most popular track per day
+        popular_tracks = merged_df.loc[merged_df.groupby("created_at")["popularity"].idxmax()][["created_at", "track_name"]]
+        kpis = kpis.merge(popular_tracks, on="created_at", how="left").rename(columns={"track_name": "most_popular_track"})
 
-            #  Ensure missing columns exist in both datasets
-            required_columns = ["play_count", "like_count", "share_count", "popularity", "duration_ms", "artists"]
+        # Find top artist per day
+        top_artists = merged_df.groupby(["created_at"])["artists"].value_counts().groupby("created_at").head(1).reset_index()
+        kpis = kpis.merge(top_artists[["created_at", "artists"]], on="created_at", how="left").rename(columns={"artists": "top_artist"})
 
-            for col in required_columns:
-                if col not in df_rds.columns:
-                    df_rds[col] = None  # Default to None for missing RDS columns
-                if col not in df_s3.columns:
-                    df_s3[col] = None  # Default to None for missing S3 columns
+        # Add KPI Type Column
+        kpis["kpi_type"] = "daily"
 
-            print(f" Updated S3 Columns (After Adding Missing Fields): {df_s3.columns.tolist()}")
+        # Convert to List of Dictionaries
+        transformed_data = kpis.to_dict(orient="records")
 
-            #  Select relevant columns for merging
-            merge_columns = ["user_id", "track_id", "created_at", "stream_hour"]
-            kpi_columns = ["duration_ms", "popularity", "play_count", "like_count", "share_count", "artists"]
+        print(f"Computed {len(transformed_data)} KPI records.")
+        return transformed_data
 
-            df_rds = df_rds[merge_columns + kpi_columns]
-            df_s3 = df_s3[merge_columns]
-
-            #  Merge datasets
-            combined_df = df_rds.merge(df_s3, on=merge_columns, how="outer")
-
-            print(f" Final Merged Columns: {combined_df.columns.tolist()}")
-
-            #  Compute **Daily KPIs** grouped by `created_at`
-            daily_kpis = combined_df.groupby("created_at").agg(
-                listen_count=("track_id", "count"),
-                avg_track_duration_sec=("duration_ms", lambda x: x.mean() / 1000 if len(x) > 0 else 0),
-                popularity_index=("popularity", lambda x: (x.sum() / x.count()) if x.count() > 0 else 0),
-                unique_listeners=("user_id", "nunique"),
-                track_diversity_index=("track_id", lambda x: x.nunique() / len(x) if len(x) > 0 else 0)
-            ).reset_index()
-
-            daily_kpis["kpi_type"] = "daily"
-
-            # Compute **Hourly KPIs** grouped by `stream_hour`
-            if "artists" in combined_df.columns:
-                hourly_kpis = combined_df.groupby("stream_hour").agg(
-                    unique_listeners=("user_id", "nunique"),
-                    top_artists=("artists", lambda x: x.mode()[0] if not x.mode().empty else None),
-                    track_diversity_index=("track_id", lambda x: x.nunique() / len(x) if len(x) > 0 else 0)
-                ).reset_index()
-            else:
-                # If 'artists' column is missing, exclude it from aggregation
-                hourly_kpis = combined_df.groupby("stream_hour").agg(
-                    unique_listeners=("user_id", "nunique"),
-                    track_diversity_index=("track_id", lambda x: x.nunique() / len(x) if len(x) > 0 else 0)
-                ).reset_index()
-
-                hourly_kpis["top_artists"] = None  # Default value for missing artists column
-
-            hourly_kpis["kpi_type"] = "hourly"
-
-            #  Convert DataFrame to List of Dictionaries
-            transformed_data = daily_kpis.to_dict(orient="records") + hourly_kpis.to_dict(orient="records")
-
-            print(f"Computed {len(transformed_data)} KPI records.")
-            return transformed_data
 
         
     @task
-    def create_kpi_table_in_redshift(redshift_conn_id: str, table: str):
+    def create_redshift_table(redshift_conn_id: str, table: str):
         """
         Create the KPI table in Amazon Redshift if it doesn't exist.
 
@@ -260,15 +217,15 @@ def rds_s3_to_redshift_pipeline():
         """
         create_table_query = f"""
         CREATE TABLE IF NOT EXISTS {table} (
-            created_at DATE,  -- For Daily KPIs
-            listen_count INT,
-            avg_track_duration_sec FLOAT,
-            popularity_index FLOAT,
-            unique_listeners INT,
-            track_diversity_index FLOAT,
-            stream_hour INT,  -- For Hourly KPIs
-            top_artists VARCHAR(255),  -- Ensure this column exists
-            kpi_type VARCHAR(50)  -- 'daily' or 'hourly'
+            created_at DATE PRIMARY KEY,  
+            unique_tracks_count INT,
+            avg_track_duration FLOAT,  
+            popularity_index FLOAT,  
+            most_popular_track VARCHAR(255),  
+            unique_listeners INT,  
+            top_artist VARCHAR(255),
+            track_diversity_index FLOAT,  
+            kpi_type VARCHAR(50)  
         );
         """
 
@@ -277,8 +234,9 @@ def rds_s3_to_redshift_pipeline():
         print(f"Table `{table}` is ready in Redshift.")
 
 
+
     @task
-    def load_kpis_to_redshift(redshift_conn_id: str, table: str, data: List[dict]):
+    def load_data_to_redshift(redshift_conn_id: str, table: str, data: List[dict]):
         """
         Load computed KPI data into Amazon Redshift.
 
@@ -295,29 +253,18 @@ def rds_s3_to_redshift_pipeline():
         connection = redshift_hook.get_conn()
         cursor = connection.cursor()
 
-        # Fetch actual columns in Redshift
-        cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table}'")
-        redshift_columns = {row[0] for row in cursor.fetchall()}  # Convert to set
-
         # Define expected columns
-        expected_columns = {
-            "created_at", "listen_count", "avg_track_duration_sec", "popularity_index",
-            "unique_listeners", "track_diversity_index", "stream_hour", "top_artists", "kpi_type"
-        }
-
-        #  Filter columns that exist in Redshift
-        final_columns = list(expected_columns & redshift_columns)
-        
-        print(f"Final Columns for Insertion: {final_columns}")
-
-        # Prepare query
-        columns_str = ', '.join(final_columns)
-        placeholders = ', '.join(['%s'] * len(final_columns))
+        columns = [
+            "created_at", "unique_tracks_count", "avg_track_duration", "popularity_index",
+            "most_popular_track", "unique_listeners", "top_artist", "track_diversity_index", "kpi_type"
+        ]
 
         # Convert list of dictionaries to list of tuples
-        records = [tuple(row.get(col, None) for col in final_columns) for row in data]
+        records = [tuple(row[col] for col in columns) for row in data]
 
-        #  Prepare SQL statement
+        # Prepare SQL statement
+        columns_str = ", ".join(columns)
+        placeholders = ", ".join(["%s"] * len(columns))
         insert_query = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
 
         try:
@@ -332,17 +279,18 @@ def rds_s3_to_redshift_pipeline():
             connection.close()
 
 
+
     # Define pipeline variables
-    mysql_conn_id = "rds_conn"
+    postgres_conn_id = "rds_conn"
     redshift_conn_id = "aws_redshift_conn"
     s3_conn_id = "aws_conn_default"
     rds_query = "SELECT u.*, s.* FROM users u JOIN songs s ON u.user_id = s.id"
-    redshift_table_kpi = "kpis"
+    redshift_table_kpi = "kpi_result"
     s3_bucket = "streaming-data-source-11"
     s3_key = "Batch_data/streams/"
 
     # Extract RDS Data
-    extracted_data_rds = extract_data_from_rds(mysql_conn_id, rds_query)
+    extracted_data_rds = extract_data_from_rds(postgres_conn_id, rds_query)
 
     # Stop DAG Execution if No RDS data is Found
     stop_dag_no_data = EmptyOperator(task_id="stop_dag_if_no_rds_data")
@@ -366,10 +314,10 @@ def rds_s3_to_redshift_pipeline():
     transformed_data = transform_and_compute_kpis(extracted_data_rds, extracted_data_s3)
 
     # Create Redshift Table for KPIs
-    create_kpi_table = create_kpi_table_in_redshift(redshift_conn_id, redshift_table_kpi)
+    create_kpi_table = create_redshift_table(redshift_conn_id, redshift_table_kpi)
 
     # Load Data into Redshift
-    load_data = load_kpis_to_redshift(redshift_conn_id, redshift_table_kpi, transformed_data)
+    load_data = load_data_to_redshift(redshift_conn_id, redshift_table_kpi, transformed_data)
 
     # DAG Dependencies
     validated_s3_files >> [stop_dag_no_files, validated_s3_columns]
