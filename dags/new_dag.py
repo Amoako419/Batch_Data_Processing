@@ -6,8 +6,6 @@ from airflow.operators.empty import EmptyOperator
 from datetime import datetime
 from typing import List
 import pandas as pd
-import tempfile
-import os
 import io
 
 
@@ -267,7 +265,7 @@ def rds_s3_to_redshift_pipeline():
         
         redshift_hook = RedshiftSQLHook(redshift_conn_id=redshift_conn_id)
         redshift_hook.run(create_table_query)
-        print(f"✅ Table `{table}` is ready in Redshift.")
+        print(f"Table `{table}` is ready in Redshift.")
 
 
 
@@ -356,7 +354,7 @@ def rds_s3_to_redshift_pipeline():
     load_data = load_kpis_to_redshift(redshift_conn_id, redshift_table_kpi, transformed_data)
 
     # DAG Dependencies
-    validated_s3_files >> [stop_dag_no_files, validated_s3_columns]  # Stop if no files
+    validated_s3_files >> [stop_dag_no_files, validated_s3_columns]  # Stop if there are  no files
     validated_s3_columns >> [stop_dag_invalid_columns, extracted_data_s3]  # Stop if columns are invalid
     create_kpi_table >> extracted_data_s3 >> transformed_data >> load_data
 
