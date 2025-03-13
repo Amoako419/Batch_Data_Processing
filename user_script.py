@@ -19,10 +19,10 @@ def connect_to_database():
             database=os.getenv("DB_NAME")
         )
         if connection.is_connected():
-            print("✅ Connected to MySQL.")
+            print("Connected to MySQL.")
             return connection
     except mysql.connector.Error as e:
-        print("❌ Error:", e)
+        print("Error:", e)
         return None
 
 # Function to create the 'users' table if it doesn't exist
@@ -40,9 +40,9 @@ def create_users_table(connection):
         with connection.cursor() as cursor:
             cursor.execute(create_table_query)
         connection.commit()
-        print("✅ Table 'users' is ready.")
+        print("Table 'users' is ready.")
     except mysql.connector.Error as e:
-        print("❌ Failed to create table:", e)
+        print("Failed to create table:", e)
 
 # Optimized batch insertion function
 def insert_users_batch(connection, data):
@@ -65,10 +65,10 @@ def insert_users_batch(connection, data):
                 batch = records[i : i + batch_size]
                 cursor.executemany(insert_query, batch)
                 connection.commit()
-                print(f"✅ Inserted {i + len(batch)} records so far...")
-        print("🎉 All user records inserted successfully!")
+                print(f"Inserted {i + len(batch)} records so far...")
+        print("All user records inserted successfully!")
     except mysql.connector.Error as e:
-        print("❌ Failed to insert batch:", e)
+        print("Failed to insert batch:", e)
         connection.rollback()
 
 # Main function
@@ -80,7 +80,7 @@ def main():
             insert_users_batch(connection, users_df)
         finally:
             connection.close()
-            print("🔒 Database connection closed.")
+            print("Database connection closed.")
 
 if __name__ == "__main__":
     main()

@@ -8,9 +8,24 @@ This project demonstrates how to use Apache Airflow to orchestrate an ETL pipeli
 <p align="center">
     <img src="airflow-etl-pro1.png" alt="The architecture diagram" width="100%" />
 </p>
+ 
+
+## Technology Stack:
+    - Orchestration: Amazon Managed Workflows for Apache Airflow
+    - Database: Amazon RDS  for user and song metadata
+    - Storage: Amazon S3 for streaming data stored in batches
+    - Data Warehouse: Amazon Redshift for storing computed KPIs
+    - Processing: Python and its libraries, such as Pandas.
 
 
 # Goals of this Project
+- Extract and validate song metadata from Amazon RDS.
+- Extract and validate streaming data saved in batches stored in S3
+- Apply transformations and compute Daily and Hourly KPIs with Python.
+- Load processed data into Amazon Redshift for further analytics.
+- Ensure data integrity, validation, and efficient querying.
+
+
 
 Project Contents
 ================

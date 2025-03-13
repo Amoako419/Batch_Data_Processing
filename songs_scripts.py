@@ -19,10 +19,10 @@ def connect_to_database():
             database=os.getenv("DB_NAME")
         )
         if connection.is_connected():
-            print("✅ Connected to MySQL.")
+            print("Connected to MySQL.")
             return connection
     except mysql.connector.Error as e:
-        print("❌ Error:", e)
+        print("Error:", e)
         return None
 
 # Function to create the 'songs' table if it doesn't exist
@@ -56,9 +56,9 @@ def create_songs_table(connection):
         with connection.cursor() as cursor:
             cursor.execute(create_table_query)
         connection.commit()
-        print("✅ Table 'songs' is ready.")
+        print(" Table 'songs' is ready.")
     except mysql.connector.Error as e:
-        print("❌ Failed to create table:", e)
+        print(" Failed to create table:", e)
 
 # Optimized batch insertion function
 def insert_songs_batch(connection, data):
@@ -106,7 +106,7 @@ def main():
             insert_songs_batch(connection, songs_df)
         finally:
             connection.close()
-            print("🔒 Database connection closed.")
+            print("Database connection closed.")
 
 if __name__ == "__main__":
     main()
