@@ -6,16 +6,29 @@ Overview
 This project demonstrates how to use Apache Airflow to orchestrate an ETL pipeline that extracts data from an S3 bucket, transforms it, and loads it into a Redshift table. This project fetches batch data containing user and song metadata that reside in an Amazon RDS database and a streaming data stored in Amazon S3 in batch files. This pipeline extract, validate, transform and load the data into Amazon Redshift for analytical processing.
 
 <p align="center">
-    <img src="airflow-etl-pro1.png" alt="The architecture diagram" width="100%" />
+    <img src="images/airflow-etl-pro1.png" alt="The architecture diagram" width="100%" />
 </p>
  
 
 ## Technology Stack:
-    - Orchestration: Amazon Managed Workflows for Apache Airflow
-    - Database: Amazon RDS  for user and song metadata
-    - Storage: Amazon S3 for streaming data stored in batches
-    - Data Warehouse: Amazon Redshift for storing computed KPIs
-    - Processing: Python and its libraries, such as Pandas.
+- Orchestration: Amazon Managed Workflows for Apache Airflow
+- Database: Amazon RDS  for user and song metadata
+- Storage: Amazon S3 for streaming data stored in batches
+- Data Warehouse: Amazon Redshift for storing computed KPIs
+- Processing: Python and its libraries, such as Pandas.
+
+
+<p align="center">
+    <img src="images/DAG.png" alt="The architecture diagram" width="100%" />
+</p>
+
+Workflow Overview
+1. Extract song metadata and user data from RDS and batch streaming data from S3. 
+2. Validate column integrity before processing. 
+3. Transform data and compute KPIs. 
+4. Load transformed data into Amazon Redshift. 
+5. Query data for business insights.
+6. Orchestrate the entire workflow with airflow.
 
 
 # Goals of this Project
