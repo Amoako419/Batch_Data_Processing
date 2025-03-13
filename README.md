@@ -6,7 +6,7 @@ Overview
 This project demonstrates how to use Apache Airflow to orchestrate an ETL pipeline that extracts data from an S3 bucket, transforms it, and loads it into a Redshift table. The project includes example DAGs that showcase different aspects of Airflow's capabilities.
 
 <p align="center">
-    <img src="airflow-etl-pro1.png" alt="The architecture diagram" width="70%" />
+    <img src="airflow-etl-pro1.png" alt="The architecture diagram" width="100%" />
 </p>
 
 Project Contents
