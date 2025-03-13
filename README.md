@@ -22,13 +22,20 @@ This project demonstrates how to use Apache Airflow to orchestrate an ETL pipeli
     <img src="images/DAG.png" alt="The architecture diagram" width="100%" />
 </p>
 
-Workflow Overview
+## Workflow Overview
 1. Extract song metadata and user data from RDS and batch streaming data from S3. 
 2. Validate column integrity before processing. 
 3. Transform data and compute KPIs. 
 4. Load transformed data into Amazon Redshift. 
 5. Query data for business insights.
 6. Orchestrate the entire workflow with airflow.
+
+## Error Handling and Validation
+### Some error handling and validation were implemented in the DAG, including tasks with EmptyOperator that terminate a DAG when it fails. Messages were logged to verify task processes, helping with debugging and confirming completed tasks.
+- S3 File Existence Check (validate_s3_data) 
+- Schema Validation for S3 (validate_s3_data_columns)
+- Missing Values Handled with Defaults
+- Data Type Validation for Redshift Compatibility
 
 
 # Goals of this Project
