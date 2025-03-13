@@ -1,7 +1,9 @@
 Overview
 ========
 
-# Batch 
+# Batch Data Processing Using Airflow, S3 & Redshift
+
+This project demonstrates how to use Apache Airflow to orchestrate an ETL pipeline that extracts data from an S3 bucket, transforms it, and loads it into a Redshift table. The project includes example DAGs that showcase different aspects of Airflow's capabilities.
 
 <p align="center">
     <img src="airflow-etl-pro1.png" alt="The architecture diagram" width="70%" />
@@ -12,13 +14,13 @@ Project Contents
 
 This Astro project contains the following files and folders:
 
-- dags: This folder contains the Python files for your Airflow DAGs. By default, this directory includes one example DAG:
-    - `
-    - `new_dag_v1` : An update of the *new_dag.py*, with the required kpi calculated and this dag creates a new redshift table called kpis
+- dags: This folder contains the Python files for your Airflow DAGs. 
+  - `new_dag.py`: A new DAG created to extract data from an S3 bucket, transform it, and load it into a Redshift table.
+  - `new_dag_v1.py`: An update of the `new_dag.py`, with the required KPI calculated and this DAG creates a new Redshift table called kpis.
 - Dockerfile: This file contains a versioned Astro Runtime Docker image that provides a differentiated Airflow experience. If you want to execute other commands or overrides at runtime, specify them here.
 - include: This folder contains any additional files that you want to include as part of your project. It is empty by default.
 - packages.txt: Install OS-level packages needed for your project by adding them to this file.
-- requirements.txt: Install Python packages needed for your project by adding them to this file. 
+- requirements.txt: Install Python packages needed for your project by adding them to this file.
 - plugins: Add custom or community plugins for your project to this file. It is empty by default.
 - airflow_settings.yaml: Use this local-only file to specify Airflow Connections, Variables, and Pools instead of entering them in the Airflow UI as you develop DAGs in this project.
 
