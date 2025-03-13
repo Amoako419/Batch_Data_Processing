@@ -31,7 +31,7 @@ This project demonstrates how to use Apache Airflow to orchestrate an ETL pipeli
 6. Orchestrate the entire workflow with airflow.
 
 ## Error Handling and Validation
-### Some error handling and validation were implemented in the DAG, including tasks with EmptyOperator that terminate a DAG when it fails. Messages were logged to verify task processes, helping with debugging and confirming completed tasks.
+ Some error handling and validation were implemented in the DAG, including tasks with EmptyOperator that terminate a DAG when it fails. Messages were logged to verify task processes, helping with debugging and confirming completed tasks.
 - S3 File Existence Check (validate_s3_data) 
 - Schema Validation for S3 (validate_s3_data_columns)
 - Missing Values Handled with Defaults
