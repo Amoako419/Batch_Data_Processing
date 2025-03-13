@@ -1,3 +1,5 @@
+import airflow
+from airflow import DAG
 from airflow.decorators import dag, task
 from airflow.providers.amazon.aws.hooks.redshift_sql import RedshiftSQLHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
@@ -336,7 +338,7 @@ def rds_s3_to_redshift_pipeline():
     redshift_conn_id = "aws_redshift_conn"
     s3_conn_id = "aws_conn_default"
     rds_query = "SELECT u.*, s.* FROM users u JOIN songs s ON u.user_id = s.id"
-    redshift_table_kpi = "kpi_results"
+    redshift_table_kpi = "kpis"
     s3_bucket = "streaming-data-source-11"
     s3_key = "Batch_data/streams/"
 
