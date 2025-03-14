@@ -61,6 +61,8 @@ This Astro project contains the following files and folders:
 - requirements.txt: Install Python packages needed for your project by adding them to this file.
 - plugins: Add custom or community plugins for your project to this file. It is empty by default.
 - airflow_settings.yaml: Use this local-only file to specify Airflow Connections, Variables, and Pools instead of entering them in the Airflow UI as you develop DAGs in this project.
+- notebooks: This folder contains Jupyter notebooks used for data exploration and KPI calculations.
+  - `kpi_calculations.ipynb`: A Jupyter notebook used to calculate the KPIs before integrating them into the Airflow DAG.
 
 Deploy Your Project Locally
 ===========================
